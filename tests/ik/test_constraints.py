@@ -115,6 +115,22 @@ def _obstacle_distances(robot, q, obstacles, sphere_idxs):
     return d.reshape(-1)
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_obstacle_coincident_centers_remain_finite(panda, active):
+    q = jnp.asarray(panda.default_configuration)
+    positions = np.asarray(panda.link_collision_positions(q))
+    obstacle = SphereObstacles(positions[:1], np.array([0.05]), np.array([active]))
+    constraint = ObstacleConstraint(panda, obstacle, sphere_idxs=np.array([0]))
+    G, h = jax.jit(constraint.rows)(q, {})
+    assert np.isfinite(G).all()
+    assert np.isfinite(h).all()
+    if active:
+        assert h[0] < 0
+    else:
+        np.testing.assert_array_equal(G, np.zeros_like(G))
+        assert h[0] > 0
+
+
 @pytest.fixture
 def obstacles(g1_q_random):
     rng = np.random.default_rng(2)

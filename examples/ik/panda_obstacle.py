@@ -39,6 +39,8 @@ PANDA_URDF = FRANKA_ASSETS_DIR / "panda.urdf"
 DT = 0.01
 OBSTACLE_POS = np.array([0.2, 0.2, 0.55])
 OBSTACLE_RADIUS = 0.1
+TRACE_MAX_POINTS = 2500
+TRACE_UPDATE_EVERY = 5
 
 
 def build_solver(robot):
@@ -81,6 +83,10 @@ def main(port: int):
     avoid = server.gui.add_checkbox("Avoid obstacle", True)
     show_spheres = server.gui.add_checkbox("Show collision spheres", False)
     status = server.gui.add_markdown("")
+    server.gui.add_markdown(
+        "**End-effector traces**  \n"
+        "Orange: commanded path; blue: actual path (last 25 seconds)"
+    )
 
     def draw_obstacle(_=None):
         server.scene.add_icosphere(
@@ -98,6 +104,11 @@ def main(port: int):
 
     state = solver.init(q_home)
     t = 0.0
+    step_count = 0
+    target_trace: list[np.ndarray] = []
+    actual_trace: list[np.ndarray] = []
+    target_trace_handle = None
+    actual_trace_handle = None
     try:
         while True:
             start = time.perf_counter()
@@ -114,6 +125,39 @@ def main(port: int):
             }
             state, _, _ = step(state, ref, DT)
             q = np.asarray(state.q)
+            actual_ee_pos = np.asarray(ee_pos(q))
+            target_trace.append(np.asarray(target.position).copy())
+            actual_trace.append(actual_ee_pos.copy())
+            if len(target_trace) > TRACE_MAX_POINTS:
+                del target_trace[:-TRACE_MAX_POINTS]
+                del actual_trace[:-TRACE_MAX_POINTS]
+
+            if step_count % TRACE_UPDATE_EVERY == 0 and len(target_trace) >= 2:
+                target_points = np.asarray(target_trace)
+                actual_points = np.asarray(actual_trace)
+                target_segments = np.stack(
+                    [target_points[:-1], target_points[1:]], axis=1
+                )
+                actual_segments = np.stack(
+                    [actual_points[:-1], actual_points[1:]], axis=1
+                )
+                if target_trace_handle is None:
+                    target_trace_handle = server.scene.add_line_segments(
+                        "/paths/commanded",
+                        target_segments,
+                        colors=(245, 135, 35),
+                        thickness=0.006,
+                    )
+                    actual_trace_handle = server.scene.add_line_segments(
+                        "/paths/actual",
+                        actual_segments,
+                        colors=(40, 150, 240),
+                        thickness=0.006,
+                    )
+                else:
+                    target_trace_handle.points = target_segments
+                    actual_trace_handle.points = actual_segments
+            step_count += 1
             positions = np.asarray(sphere_pos(q))
             clearance = np.linalg.norm(positions - obstacle.position, axis=1)
             clearance -= sphere_radii + radius.value
@@ -123,7 +167,7 @@ def main(port: int):
                 for sphere, pos in zip(spheres, positions, strict=True):
                     sphere.position = pos
                     sphere.visible = show_spheres.value
-            ee_error = np.linalg.norm(ee_pos(q) - ref["ee_pos"])
+            ee_error = np.linalg.norm(actual_ee_pos - ref["ee_pos"])
             status.content = (
                 f"Position error: {1000 * ee_error:.0f} mm  \n"
                 f"Obstacle clearance: {1000 * clearance.min():.0f} mm"

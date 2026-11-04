@@ -687,6 +687,12 @@ def merge_fixed_links(robot, links_to_keep):
                 # parent_link.visuals.extend(child_link.visuals)
                 parent_link.collisions.extend(child_link.collisions)
 
+                # Reparent immediately so later merges operate on the current
+                # tree, including joints below chains of fixed links.
+                for descendant_joint in joints:
+                    if descendant_joint.parent == child_link.name:
+                        descendant_joint.parent = parent_link.name
+
                 links.pop(child_idx)
                 joints.remove(joint)
 

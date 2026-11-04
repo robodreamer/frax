@@ -285,7 +285,15 @@ class ObstacleConstraint(_SphereConstraint):
         spheres = jnp.asarray(self.row_spheres)[keep]
         Jv, Jw = self.robot._joint_jacobians(joint_tfs)
         J = self.robot._link_collision_jacobians(joint_tfs, Jv, Jw, spheres)
-        normals = delta[keep] / dist[keep, None]
+        kept_delta = delta[keep]
+        kept_dist = dist[keep, None]
+        # The distance gradient is undefined at coincident centers. Pick a
+        # deterministic unit subgradient there, avoiding NaNs in the QP.
+        normals = jnp.where(
+            kept_dist > 1e-12,
+            kept_delta / jnp.maximum(kept_dist, 1e-12),
+            jnp.array([1.0, 0.0, 0.0]),
+        )
         dh = jnp.einsum("ki,kij->kj", normals, J)
         dh = jnp.where(active[keep, None], dh, 0.0)
         return -dh, self.gain * h[keep]
